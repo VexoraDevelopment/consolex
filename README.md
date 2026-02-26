@@ -9,6 +9,12 @@ Small standalone console toolkit:
 - prebuilt themes and palette helpers
 - pipeline logging architecture (`parse -> processors -> render`)
 
+## Install
+
+```bash
+go get github.com/VexoraDevelopment/consolex@latest
+```
+
 ## Minimal usage
 
 ```go
