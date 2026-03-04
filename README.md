@@ -32,6 +32,16 @@ logFile, err := consolex.SetupDefaultSlog(consolex.LoggerConfig{
 	ArchiveDir:  "logs",
 	Level:       slog.LevelDebug,
 	Theme:       consolex.NordTheme(),
+	Dedupe: consolex.DedupeConfig{
+		Enabled: true,
+		Remap: []consolex.LevelRemapRule{
+			{
+				From:     "INFO",
+				To:       "DEBUG",
+				Contains: []string{"conn write packet failed", "context canceled"},
+			},
+		},
+	},
 	FieldProvider: consolex.StaticFieldProvider{
 		"proto_id": consolex.New().White().BgBlue().Bold(),
 		"raddr":    consolex.New().Black().BgYellow(),
@@ -56,6 +66,40 @@ logFile, err := consolex.SetupDefaultSlog(consolex.LoggerConfig{
 	})
 	<-loop.Start()
 }
+```
+
+## Dedup/Aggregation (`xN`)
+
+Enable duplicate line aggregation in `LoggerConfig.Dedupe`:
+
+```go
+cfg := consolex.LoggerConfig{
+	Level: slog.LevelDebug,
+	Dedupe: consolex.DedupeConfig{
+		Enabled: true,
+		Window:  time.Second, // default: 1s
+	},
+}
+```
+
+Repeated identical lines are collapsed and emitted once with:
+- `repeat="xN"`
+
+Example:
+
+```text
+time=... level=INFO msg="conn write packet failed" packet=*packet.UpdateBlock err="context canceled" repeat="x37"
+```
+
+You can also remap levels by rules:
+
+```go
+Dedupe: consolex.DedupeConfig{
+	Enabled: true,
+	Remap: []consolex.LevelRemapRule{
+		{From: "INFO", To: "DEBUG", Contains: []string{"context canceled"}},
+	},
+},
 ```
 
 ## Chalk-like style API

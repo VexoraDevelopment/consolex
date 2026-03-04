@@ -17,6 +17,16 @@ func main() {
 		Level:       slog.LevelDebug,
 		Theme:       consolex.DefaultTheme(),
 		Profile:     profile,
+		Dedupe: consolex.DedupeConfig{
+			Enabled: true,
+			Remap: []consolex.LevelRemapRule{
+				{
+					From:     "INFO",
+					To:       "DEBUG",
+					Contains: []string{"conn write packet failed", "context canceled"},
+				},
+			},
+		},
 		Processors: []consolex.Processor{
 			consolex.ProcessorFunc(func(rec *consolex.LogRecord) {
 				// Example: force showing key for world pointer fields in compact layout.
@@ -44,4 +54,7 @@ func main() {
 	defer logFile.Close()
 
 	slog.Info("world register", "name", "hub_snow", "ptr", "0xc004ba0ea0")
+	for i := 0; i < 10; i++ {
+		slog.Info("conn write packet failed", "packet", "*packet.UpdateBlock", "err", "context canceled")
+	}
 }

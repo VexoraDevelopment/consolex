@@ -19,6 +19,8 @@ func NordTheme() Theme    { return style.NordTheme() }
 func SunsetTheme() Theme  { return style.SunsetTheme() }
 
 type LoggerConfig = logging.LoggerConfig
+type DedupeConfig = logging.DedupeConfig
+type LevelRemapRule = logging.LevelRemapRule
 type Profile = logging.Profile
 type LogRecord = logging.LogRecord
 type RecordField = logging.RecordField

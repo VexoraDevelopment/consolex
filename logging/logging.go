@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -347,6 +348,20 @@ type LoggerConfig struct {
 	FieldTransform FieldTransformer
 	Processors     []Processor
 	Renderer       Renderer
+	Dedupe         DedupeConfig
+}
+
+type DedupeConfig struct {
+	Enabled bool
+	Window  time.Duration
+	KeyFunc func(rec *LogRecord) string
+	Remap   []LevelRemapRule
+}
+
+type LevelRemapRule struct {
+	From     string
+	To       string
+	Contains []string
 }
 
 func SetupDefaultSlog(cfg LoggerConfig) (*os.File, error) {
@@ -380,9 +395,19 @@ func SetupDefaultSlog(cfg LoggerConfig) (*os.File, error) {
 		return nil, fmt.Errorf("open %s: %w", logPath, err)
 	}
 
-	consoleOut := NewColorizingWriter(os.Stdout)
-	consoleHandler := slog.NewTextHandler(consoleOut, &slog.HandlerOptions{Level: cfg.Level})
-	fileHandler := slog.NewTextHandler(file, &slog.HandlerOptions{Level: cfg.Level})
+	consoleSink := io.Writer(NewColorizingWriter(os.Stdout))
+	fileSink := io.Writer(file)
+	if cfg.Dedupe.Enabled {
+		window := cfg.Dedupe.Window
+		if window <= 0 {
+			window = time.Second
+		}
+		consoleSink = NewAggregateLineWriter(consoleSink, window, cfg.Dedupe.KeyFunc, cfg.Dedupe.Remap)
+		fileSink = NewAggregateLineWriter(fileSink, window, cfg.Dedupe.KeyFunc, cfg.Dedupe.Remap)
+	}
+
+	consoleHandler := slog.NewTextHandler(consoleSink, &slog.HandlerOptions{Level: cfg.Level})
+	fileHandler := slog.NewTextHandler(fileSink, &slog.HandlerOptions{Level: cfg.Level})
 	slog.SetDefault(slog.New(fanoutHandler{handlers: []slog.Handler{consoleHandler, fileHandler}}))
 	return file, nil
 }
@@ -513,4 +538,167 @@ func ColorizeLogLine(line string) string {
 		return line
 	}
 	return pl.Colorize(line)
+}
+
+type aggregateEntry struct {
+	key   string
+	line  string
+	count int
+}
+
+type AggregateLineWriter struct {
+	dst    io.Writer
+	window time.Duration
+	keyFn  func(*LogRecord) string
+	remap  []LevelRemapRule
+
+	mu    sync.Mutex
+	buf   []byte
+	timer *time.Timer
+	cur   *aggregateEntry
+}
+
+func NewAggregateLineWriter(dst io.Writer, window time.Duration, keyFn func(*LogRecord) string, remap []LevelRemapRule) *AggregateLineWriter {
+	if window <= 0 {
+		window = time.Second
+	}
+	return &AggregateLineWriter{
+		dst:    dst,
+		window: window,
+		keyFn:  keyFn,
+		remap:  remap,
+	}
+}
+
+func (w *AggregateLineWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.buf = append(w.buf, p...)
+	for {
+		i := bytes.IndexByte(w.buf, '\n')
+		if i < 0 {
+			break
+		}
+		line := string(w.buf[:i])
+		w.buf = w.buf[i+1:]
+		w.ingestLocked(line)
+	}
+	return len(p), nil
+}
+
+func (w *AggregateLineWriter) ingestLocked(line string) {
+	rec := ParseTextLogLine(line)
+	applyLevelRemap(rec, w.remap)
+	rendered := renderTextRecord(rec)
+
+	key := rendered
+	if w.keyFn != nil {
+		key = w.keyFn(rec)
+	}
+	if key == "" {
+		key = rendered
+	}
+
+	if w.cur != nil && w.cur.key == key {
+		w.cur.count++
+		w.resetTimerLocked()
+		return
+	}
+
+	_ = w.flushLocked()
+	w.cur = &aggregateEntry{
+		key:   key,
+		line:  rendered,
+		count: 1,
+	}
+	w.resetTimerLocked()
+}
+
+func (w *AggregateLineWriter) resetTimerLocked() {
+	if w.timer == nil {
+		w.timer = time.AfterFunc(w.window, w.onTimer)
+		return
+	}
+	w.timer.Reset(w.window)
+}
+
+func (w *AggregateLineWriter) onTimer() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_ = w.flushLocked()
+}
+
+func (w *AggregateLineWriter) flushLocked() error {
+	if w.cur == nil {
+		return nil
+	}
+	line := w.cur.line
+	if w.cur.count > 1 {
+		line = line + " repeat=" + strconv.Quote("x"+strconv.Itoa(w.cur.count))
+	}
+	w.cur = nil
+	_, err := io.WriteString(w.dst, line+"\n")
+	return err
+}
+
+func applyLevelRemap(rec *LogRecord, rules []LevelRemapRule) {
+	if rec == nil || len(rules) == 0 {
+		return
+	}
+	for _, rule := range rules {
+		if !matchesLevelRule(rec, rule) {
+			continue
+		}
+		to := strings.TrimSpace(rule.To)
+		if to != "" {
+			rec.Level = strings.ToUpper(to)
+		}
+		return
+	}
+}
+
+func matchesLevelRule(rec *LogRecord, rule LevelRemapRule) bool {
+	from := strings.TrimSpace(rule.From)
+	if from != "" && !strings.EqualFold(strings.TrimSpace(rec.Level), from) {
+		return false
+	}
+	if len(rule.Contains) == 0 {
+		return true
+	}
+	hay := strings.ToLower(rec.Raw)
+	for _, needle := range rule.Contains {
+		n := strings.ToLower(strings.TrimSpace(needle))
+		if n == "" {
+			continue
+		}
+		if !strings.Contains(hay, n) {
+			return false
+		}
+	}
+	return true
+}
+
+func renderTextRecord(rec *LogRecord) string {
+	if rec == nil {
+		return ""
+	}
+	parts := make([]string, 0, 3+len(rec.Fields))
+	if rec.Time != "" {
+		parts = append(parts, "time="+rec.Time)
+	}
+	if rec.Level != "" {
+		parts = append(parts, "level="+strings.ToUpper(rec.Level))
+	}
+	if rec.Message != "" {
+		parts = append(parts, "msg="+rec.Message)
+	}
+	for _, f := range rec.Fields {
+		value := f.Value
+		if f.ValueOut != "" {
+			value = f.ValueOut
+		}
+		parts = append(parts, f.Key+"="+value)
+	}
+	return strings.Join(parts, " ")
 }
