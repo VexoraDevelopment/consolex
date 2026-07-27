@@ -49,6 +49,7 @@ func ColorizeLogLine(line string) string { return logging.ColorizeLogLine(line) 
 func StripANSI(s string) string          { return style.StripANSI(s) }
 
 type Command = cmdline.Command
+type CommandInfo = cmdline.CommandInfo
 type Options = cmdline.Options
 type Loop = cmdline.Loop
 

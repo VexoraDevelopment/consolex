@@ -21,6 +21,11 @@ type Command struct {
 	Complete    func(argPos int, prefix string) []string
 }
 
+type CommandInfo struct {
+	Name        string
+	Description string
+}
+
 type Options struct {
 	Prompt          string
 	HistoryLimit    int
@@ -30,6 +35,7 @@ type Options struct {
 	OnUnknown       func(name string)
 	Resolve         func(name, args string) bool
 	CommandNames    func(prefix string) []string
+	CommandInfos    func(prefix string) []CommandInfo
 	ArgSuggestions  func(name string, argPos int, prefix string) []string
 	Out             *os.File
 	Log             *slog.Logger
@@ -71,10 +77,25 @@ func NewLoop(opts Options) *Loop {
 		Name:        "help",
 		Description: "Show available console commands",
 		Execute: func(string) {
-			names := l.availableNames("")
-			_, _ = fmt.Fprintln(opts.Out, "Available commands:")
-			for _, n := range names {
-				_, _ = fmt.Fprintln(opts.Out, " - "+n)
+			commands := l.availableCommandInfos("")
+			if len(commands) == 0 {
+				_, _ = fmt.Fprintln(opts.Out, "No commands available.")
+				return
+			}
+			width := 0
+			for _, info := range commands {
+				if n := len(info.Name); n > width {
+					width = n
+				}
+			}
+			_, _ = fmt.Fprintf(opts.Out, "Available commands (%d):\n", len(commands))
+			for _, info := range commands {
+				desc := strings.TrimSpace(info.Description)
+				if desc == "" {
+					_, _ = fmt.Fprintf(opts.Out, " - %-*s\n", width, info.Name)
+					continue
+				}
+				_, _ = fmt.Fprintf(opts.Out, " - %-*s  %s\n", width, info.Name, desc)
 			}
 		},
 	})
@@ -252,11 +273,10 @@ func (c *completer) Do(line []rune, pos int) ([][]rune, int) {
 }
 
 func (l *Loop) availableNames(prefix string) []string {
+	infos := l.availableCommandInfos(prefix)
 	names := map[string]struct{}{}
-	for alias := range l.commands {
-		if matchPrefix(alias, prefix) {
-			names[alias] = struct{}{}
-		}
+	for _, info := range infos {
+		names[info.Name] = struct{}{}
 	}
 	if l.opts.CommandNames != nil {
 		for _, n := range l.opts.CommandNames(prefix) {
@@ -274,6 +294,71 @@ func (l *Loop) availableNames(prefix string) []string {
 		out = append(out, n)
 	}
 	sort.Strings(out)
+	return out
+}
+
+func (l *Loop) availableCommandInfos(prefix string) []CommandInfo {
+	seen := map[string]struct{}{}
+	out := make([]CommandInfo, 0, len(l.commands))
+
+	internal := map[string]CommandInfo{}
+	for alias, cmd := range l.commands {
+		if cmd == nil {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(alias))
+		if name == "" {
+			continue
+		}
+		if !matchPrefix(name, prefix) {
+			continue
+		}
+		if _, exists := internal[name]; exists {
+			continue
+		}
+		internal[name] = CommandInfo{
+			Name:        name,
+			Description: strings.TrimSpace(cmd.Description),
+		}
+	}
+	for _, info := range internal {
+		seen[info.Name] = struct{}{}
+		out = append(out, info)
+	}
+
+	if l.opts.CommandInfos != nil {
+		for _, info := range l.opts.CommandInfos(prefix) {
+			name := strings.ToLower(strings.TrimSpace(info.Name))
+			if name == "" || !matchPrefix(name, prefix) {
+				continue
+			}
+			if _, exists := seen[name]; exists {
+				continue
+			}
+			seen[name] = struct{}{}
+			out = append(out, CommandInfo{
+				Name:        name,
+				Description: strings.TrimSpace(info.Description),
+			})
+		}
+	}
+	if l.opts.CommandNames != nil {
+		for _, raw := range l.opts.CommandNames(prefix) {
+			name := strings.ToLower(strings.TrimSpace(raw))
+			if name == "" || !matchPrefix(name, prefix) {
+				continue
+			}
+			if _, exists := seen[name]; exists {
+				continue
+			}
+			seen[name] = struct{}{}
+			out = append(out, CommandInfo{Name: name})
+		}
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
 	return out
 }
 
