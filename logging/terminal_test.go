@@ -39,10 +39,25 @@ func TestTerminalRedrawsStatusesAroundLog(t *testing.T) {
 	}
 }
 
-type testPrompt struct{ clean, refresh int }
+type testPrompt struct {
+	clean, refresh, writes int
+}
 
-func (p *testPrompt) Clean()   { p.clean++ }
-func (p *testPrompt) Refresh() { p.refresh++ }
+func (p *testPrompt) Clean()                         { p.clean++ }
+func (p *testPrompt) Refresh()                       { p.refresh++ }
+func (p *testPrompt) Write(data []byte) (int, error) { p.writes++; return len(data), nil }
+
+func TestTerminalDelegatesPermanentWritesToReadline(t *testing.T) {
+	var out bytes.Buffer
+	prompt := new(testPrompt)
+	r := &terminalRenderer{out: &out, interactive: true, prompt: prompt}
+	if err := r.writeLog("log"); err != nil {
+		t.Fatal(err)
+	}
+	if prompt.writes != 1 || prompt.clean != 0 || prompt.refresh != 0 || out.Len() != 0 {
+		t.Fatalf("prompt writes=%d clean=%d refresh=%d direct=%q", prompt.writes, prompt.clean, prompt.refresh, out.String())
+	}
+}
 
 func TestStatusConcurrentUpdatesAndCompletion(t *testing.T) {
 	r := newTerminalRenderer(&bytes.Buffer{}, false)

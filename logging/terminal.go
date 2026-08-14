@@ -19,6 +19,7 @@ var spinnerFrames = [...]string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦",
 type promptController interface {
 	Clean()
 	Refresh()
+	Write([]byte) (int, error)
 }
 
 type terminalRenderer struct {
@@ -62,6 +63,9 @@ func (r *terminalRenderer) writeLog(line string) error {
 func (r *terminalRenderer) write(data []byte) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.interactive && r.prompt != nil && r.rendered == 0 {
+		return r.prompt.Write(data)
+	}
 	if r.prompt != nil {
 		r.prompt.Clean()
 	}

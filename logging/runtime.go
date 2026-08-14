@@ -72,6 +72,7 @@ func (r *SlogRuntime) NewStatus(message string) *Status {
 func (r *SlogRuntime) AttachPrompt(prompt interface {
 	Clean()
 	Refresh()
+	Write([]byte) (int, error)
 }) {
 	if r != nil && r.terminal != nil {
 		r.terminal.attachPrompt(prompt)
