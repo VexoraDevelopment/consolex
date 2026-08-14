@@ -23,8 +23,35 @@ func TestMinecraftHandler(t *testing.T) {
 	if err := h.Handle(context.Background(), rec); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := out.String(), "[19:27:41] [server/INFO]: Starting Nucleus dev-82fd391 version=dev-82fd391\n"; got != want {
+	if got, want := out.String(), "[19:27:41] [INFO]  [server]    Starting Nucleus dev-82fd391 version=dev-82fd391\n"; got != want {
 		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestMinecraftHandlerAlignsMessagesByVisibleWidth(t *testing.T) {
+	var out bytes.Buffer
+	theme := style.DefaultTheme()
+	h := &minecraftHandler{out: &out, level: LevelTrace, theme: theme, profile: DefaultProfile(), componentKey: "component", defaultComponent: "server", mu: new(sync.Mutex)}
+	for _, test := range []struct {
+		level     slog.Level
+		component string
+		message   string
+	}{
+		{slog.LevelInfo, "world", "Loading world Overworld"},
+		{slog.LevelWarn, "plugin", "Callback took 482ms"},
+		{slog.LevelError, "storage", "Failed to save chunk"},
+		{LevelTrace, "scheduler", "Task dispatched"},
+	} {
+		rec := slog.NewRecord(time.Date(2026, 8, 14, 21, 3, 30, 0, time.Local), test.level, test.message, 0)
+		rec.AddAttrs(slog.String("component", test.component))
+		if err := h.Handle(context.Background(), rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, line := range strings.Split(strings.TrimSpace(style.StripANSI(out.String())), "\n") {
+		if got := strings.Index(line, strings.Fields(line)[3]); got != 31 {
+			t.Fatalf("message column = %d in %q, want 31", got, line)
+		}
 	}
 }
 

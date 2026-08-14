@@ -11,12 +11,18 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/VexoraDevelopment/consolex/style"
 	"github.com/VexoraDevelopment/consolex/term"
 )
 
 const LevelTrace slog.Level = slog.LevelDebug - 4
+
+const (
+	consoleLevelWidth = 5
+	consoleScopeWidth = 9
+)
 
 type ConsoleAttrsFunc func(level slog.Level, component string, attrs []slog.Attr) []slog.Attr
 
@@ -191,10 +197,13 @@ func (h *minecraftHandler) Handle(_ context.Context, rec slog.Record) error {
 		appendRenderedAttr(&fields, attr, h.componentKey, h.profile, h.theme)
 	}
 	timestamp := rec.Time.Format("15:04:05")
-	if rec.Level <= LevelTrace {
-		timestamp = rec.Time.Format("15:04:05.000")
-	}
-	line := fmt.Sprintf("[%s] [%s/%s]: %s", h.theme.TimeValue.Dim().Wrap(timestamp), h.theme.MsgKey.Wrap(component), levelStyle(h.theme, rec.Level).Wrap(levelLabel(rec.Level)), rec.Message)
+	level := levelLabel(rec.Level)
+	line := fmt.Sprintf("[%s] %s%s%s%s%s",
+		h.theme.TimeValue.Dim().Wrap(timestamp),
+		bracketed(levelStyle(h.theme, rec.Level).Wrap(level)), visiblePadding(level, consoleLevelWidth),
+		bracketed(h.theme.MsgKey.Wrap(component)), visiblePadding(component, consoleScopeWidth),
+		rec.Message,
+	)
 	if len(fields) != 0 {
 		line += " " + strings.Join(fields, " ")
 	}
@@ -202,6 +211,13 @@ func (h *minecraftHandler) Handle(_ context.Context, rec slog.Record) error {
 	defer h.mu.Unlock()
 	_, err := io.WriteString(h.out, line+"\n")
 	return err
+}
+
+func bracketed(value string) string { return "[" + value + "]" }
+
+func visiblePadding(value string, width int) string {
+	visible := utf8.RuneCountInString(style.StripANSI(value))
+	return strings.Repeat(" ", max(1, width-visible+1))
 }
 
 func (h *minecraftHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
