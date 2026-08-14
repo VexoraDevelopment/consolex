@@ -68,6 +68,30 @@ logFile, err := consolex.SetupDefaultSlog(consolex.LoggerConfig{
 }
 ```
 
+## Mutable status lines
+
+`OpenSlog` owns permanent logs, status redraws and the readline prompt through one terminal renderer:
+
+```go
+runtime, err := consolex.OpenSlog(consolex.SlogConfig{Console: os.Stdout})
+if err != nil {
+	panic(err)
+}
+defer runtime.Close()
+
+status := runtime.NewStatus(`Preparing spawn in "Overworld"`)
+defer status.Close()
+status.SetProgress(.42)
+status.SetProgress(.81)
+status.Close()
+
+slog.Info("spawn prepared", "component", "world", "event", "world.spawn.prepared", "duration_ms", 842)
+```
+
+Pass the runtime to `consolex.Options{Runtime: runtime}` to keep readline input intact while logs and statuses redraw. Updates are terminal-only and coalesced; redirected/CI output emits no cursor sequences or intermediate percentages. `Success`, `Failed` and `Cancelled` are optional console-only final messages. Use `slog` for semantic final events that must reach JSON/file sinks.
+
+`runtime.SetTitle("Pulse | Online 3/100 | TPS 20.00")` updates the terminal/window title through the same coordinator and is also a no-op outside a TTY.
+
 ## Dedup/Aggregation (`xN`)
 
 Enable duplicate line aggregation in `LoggerConfig.Dedupe`:

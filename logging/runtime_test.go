@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -17,7 +16,7 @@ import (
 
 func TestMinecraftHandler(t *testing.T) {
 	var out bytes.Buffer
-	h := &minecraftHandler{out: &out, level: slog.LevelDebug, theme: disabledTheme(), profile: DefaultProfile(), componentKey: "component", defaultComponent: "server", mu: new(sync.Mutex)}
+	h := &minecraftHandler{terminal: newTerminalRenderer(&out, false), level: slog.LevelDebug, theme: disabledTheme(), profile: DefaultProfile(), componentKey: "component", defaultComponent: "server"}
 	rec := slog.NewRecord(time.Date(2026, 8, 14, 19, 27, 41, 0, time.Local), slog.LevelInfo, "Starting Nucleus dev-82fd391", 0)
 	rec.AddAttrs(slog.String("component", "server"), slog.String("event", "server.starting"), slog.String("version", "dev-82fd391"))
 	if err := h.Handle(context.Background(), rec); err != nil {
@@ -31,7 +30,7 @@ func TestMinecraftHandler(t *testing.T) {
 func TestMinecraftHandlerAlignsMessagesByVisibleWidth(t *testing.T) {
 	var out bytes.Buffer
 	theme := style.DefaultTheme()
-	h := &minecraftHandler{out: &out, level: LevelTrace, theme: theme, profile: DefaultProfile(), componentKey: "component", defaultComponent: "server", mu: new(sync.Mutex)}
+	h := &minecraftHandler{terminal: newTerminalRenderer(&out, false), level: LevelTrace, theme: theme, profile: DefaultProfile(), componentKey: "component", defaultComponent: "server"}
 	for _, test := range []struct {
 		level     slog.Level
 		component string

@@ -3,6 +3,7 @@ package cmdline
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"sort"
@@ -10,6 +11,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/VexoraDevelopment/consolex/logging"
 	"github.com/chzyer/readline"
 )
 
@@ -39,6 +41,7 @@ type Options struct {
 	ArgSuggestions  func(name string, argPos int, prefix string) []string
 	Out             *os.File
 	Log             *slog.Logger
+	Runtime         *logging.SlogRuntime
 }
 
 type Loop struct {
@@ -67,6 +70,10 @@ func NewLoop(opts Options) *Loop {
 	if opts.Log == nil {
 		opts.Log = slog.Default()
 	}
+	var commandOut io.Writer = opts.Out
+	if opts.Runtime != nil {
+		commandOut = opts.Runtime.ConsoleWriter()
+	}
 	l := &Loop{
 		opts:     opts,
 		done:     make(chan struct{}),
@@ -79,7 +86,7 @@ func NewLoop(opts Options) *Loop {
 		Execute: func(string) {
 			commands := l.availableCommandInfos("")
 			if len(commands) == 0 {
-				_, _ = fmt.Fprintln(opts.Out, "No commands available.")
+				_, _ = fmt.Fprintln(commandOut, "No commands available.")
 				return
 			}
 			width := 0
@@ -88,14 +95,14 @@ func NewLoop(opts Options) *Loop {
 					width = n
 				}
 			}
-			_, _ = fmt.Fprintf(opts.Out, "Available commands (%d):\n", len(commands))
+			_, _ = fmt.Fprintf(commandOut, "Available commands (%d):\n", len(commands))
 			for _, info := range commands {
 				desc := strings.TrimSpace(info.Description)
 				if desc == "" {
-					_, _ = fmt.Fprintf(opts.Out, " - %-*s\n", width, info.Name)
+					_, _ = fmt.Fprintf(commandOut, " - %-*s\n", width, info.Name)
 					continue
 				}
-				_, _ = fmt.Fprintf(opts.Out, " - %-*s  %s\n", width, info.Name, desc)
+				_, _ = fmt.Fprintf(commandOut, " - %-*s  %s\n", width, info.Name, desc)
 			}
 		},
 	})
@@ -104,28 +111,28 @@ func NewLoop(opts Options) *Loop {
 		Aliases:     []string{"cls"},
 		Description: "Clear terminal screen",
 		Execute: func(string) {
-			_, _ = fmt.Fprint(opts.Out, "\x1b[H\x1b[2J")
+			_, _ = fmt.Fprint(commandOut, "\x1b[H\x1b[2J")
 		},
 	})
 	l.Register(Command{
 		Name:        "uptime",
 		Description: "Show console loop uptime",
 		Execute: func(string) {
-			_, _ = fmt.Fprintf(opts.Out, "uptime: %s\n", time.Since(l.started).Truncate(time.Second))
+			_, _ = fmt.Fprintf(commandOut, "uptime: %s\n", time.Since(l.started).Truncate(time.Second))
 		},
 	})
 	l.Register(Command{
 		Name:        "pid",
 		Description: "Show current process id",
 		Execute: func(string) {
-			_, _ = fmt.Fprintf(opts.Out, "pid: %d\n", os.Getpid())
+			_, _ = fmt.Fprintf(commandOut, "pid: %d\n", os.Getpid())
 		},
 	})
 	l.Register(Command{
 		Name:        "echo",
 		Description: "Print text back to console",
 		Execute: func(args string) {
-			_, _ = fmt.Fprintln(opts.Out, args)
+			_, _ = fmt.Fprintln(commandOut, args)
 		},
 	})
 	return l
@@ -171,6 +178,8 @@ func (l *Loop) Start() <-chan struct{} {
 			InterruptPrompt: l.opts.InterruptPrompt,
 			EOFPrompt:       l.opts.EOFPrompt,
 			AutoComplete:    &completer{loop: l},
+			Stdout:          l.opts.Out,
+			Stderr:          l.opts.Out,
 		})
 		if err != nil {
 			l.opts.Log.Warn("console readline init failed", "err", err)
@@ -179,6 +188,10 @@ func (l *Loop) Start() <-chan struct{} {
 		defer func(rl *readline.Instance) {
 			_ = rl.Close()
 		}(rl)
+		if l.opts.Runtime != nil {
+			l.opts.Runtime.AttachPrompt(rl)
+			defer l.opts.Runtime.AttachPrompt(nil)
+		}
 		l.opts.Log.Info("console command input enabled")
 		for {
 			line, err := rl.Readline()

@@ -39,6 +39,7 @@ type SlogConfig = logging.SlogConfig
 type SlogRuntime = logging.SlogRuntime
 type ConsoleAttrsFunc = logging.ConsoleAttrsFunc
 type ConsoleRecordFunc = logging.ConsoleRecordFunc
+type Status = logging.Status
 
 const LevelTrace slog.Level = logging.LevelTrace
 

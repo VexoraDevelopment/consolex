@@ -15,6 +15,7 @@ import (
 
 	"github.com/VexoraDevelopment/consolex/style"
 	"github.com/VexoraDevelopment/consolex/term"
+	"github.com/chzyer/readline"
 )
 
 const LevelTrace slog.Level = slog.LevelDebug - 4
@@ -39,17 +40,59 @@ type SlogConfig struct {
 	FileQueueSize    int
 	ConsoleAttrs     ConsoleAttrsFunc
 	ConsoleRecord    ConsoleRecordFunc
+	Interactive      *bool
 }
 
 type SlogRuntime struct {
-	file *asyncLineWriter
+	file     *asyncLineWriter
+	terminal *terminalRenderer
 }
 
 func (r *SlogRuntime) Close() error {
-	if r == nil || r.file == nil {
+	if r == nil {
 		return nil
 	}
-	return r.file.Close()
+	var err error
+	if r.file != nil {
+		err = r.file.Close()
+	}
+	if r.terminal != nil {
+		r.terminal.close()
+	}
+	return err
+}
+
+func (r *SlogRuntime) NewStatus(message string) *Status {
+	if r == nil || r.terminal == nil {
+		return &Status{}
+	}
+	return r.terminal.newStatus(message)
+}
+
+func (r *SlogRuntime) AttachPrompt(prompt interface {
+	Clean()
+	Refresh()
+}) {
+	if r != nil && r.terminal != nil {
+		r.terminal.attachPrompt(prompt)
+	}
+}
+
+func (r *SlogRuntime) ConsoleWriter() io.Writer {
+	if r == nil || r.terminal == nil {
+		return io.Discard
+	}
+	return terminalWriter{renderer: r.terminal}
+}
+
+func (r *SlogRuntime) SetTitle(title string) {
+	if r != nil && r.terminal != nil {
+		r.terminal.setTitle(title)
+	}
+}
+
+func (r *SlogRuntime) Interactive() bool {
+	return r != nil && r.terminal != nil && r.terminal.interactive
 }
 
 func (r *SlogRuntime) Dropped() uint64 {
@@ -75,16 +118,26 @@ func OpenSlog(cfg SlogConfig) (*SlogRuntime, error) {
 	}
 	profile := normalizeProfile(cfg.Profile)
 	policy := newComponentPolicy(cfg.Level, cfg.ComponentLevels, cfg.ComponentKey, cfg.DefaultComponent)
-	console := &minecraftHandler{out: cfg.Console, level: policy.minimum, theme: cfg.Theme, profile: profile, componentKey: cfg.ComponentKey, defaultComponent: cfg.DefaultComponent, attrsFn: cfg.ConsoleAttrs, recordFn: cfg.ConsoleRecord, mu: &sync.Mutex{}}
+	interactive := false
+	if file, ok := cfg.Console.(*os.File); ok {
+		interactive = readline.IsTerminal(int(file.Fd())) && os.Getenv("CI") == "" && !strings.EqualFold(os.Getenv("TERM"), "dumb")
+	}
+	if cfg.Interactive != nil {
+		interactive = *cfg.Interactive
+	}
+	terminal := newTerminalRenderer(cfg.Console, interactive)
+	console := &minecraftHandler{terminal: terminal, level: policy.minimum, theme: cfg.Theme, profile: profile, componentKey: cfg.ComponentKey, defaultComponent: cfg.DefaultComponent, attrsFn: cfg.ConsoleAttrs, recordFn: cfg.ConsoleRecord}
 	var handlers []slog.Handler
 	handlers = append(handlers, console)
-	runtime := &SlogRuntime{}
+	runtime := &SlogRuntime{terminal: terminal}
 	if strings.TrimSpace(cfg.FilePath) != "" {
 		if err := os.MkdirAll(filepath.Dir(cfg.FilePath), 0o755); err != nil {
+			terminal.close()
 			return nil, fmt.Errorf("create log directory: %w", err)
 		}
 		file, err := os.OpenFile(cfg.FilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
+			terminal.close()
 			return nil, fmt.Errorf("open log file: %w", err)
 		}
 		queue := cfg.FileQueueSize
@@ -169,7 +222,7 @@ func (h *componentPolicyHandler) WithGroup(name string) slog.Handler {
 }
 
 type minecraftHandler struct {
-	out                            io.Writer
+	terminal                       *terminalRenderer
 	level                          slog.Leveler
 	theme                          style.Theme
 	profile                        Profile
@@ -178,7 +231,6 @@ type minecraftHandler struct {
 	groups                         []string
 	attrsFn                        ConsoleAttrsFunc
 	recordFn                       ConsoleRecordFunc
-	mu                             *sync.Mutex
 }
 
 func (h *minecraftHandler) Enabled(_ context.Context, level slog.Level) bool {
@@ -214,10 +266,7 @@ func (h *minecraftHandler) Handle(_ context.Context, rec slog.Record) error {
 	if len(fields) != 0 {
 		line += " " + strings.Join(fields, " ")
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	_, err := io.WriteString(h.out, line+"\n")
-	return err
+	return h.terminal.writeLog(line)
 }
 
 func bracketed(value string) string { return "[" + value + "]" }
@@ -229,7 +278,7 @@ func visiblePadding(value string, width int) string {
 
 func (h *minecraftHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	all := append(append([]slog.Attr(nil), h.attrs...), attrs...)
-	return &minecraftHandler{out: h.out, level: h.level, theme: h.theme, profile: h.profile, componentKey: h.componentKey, defaultComponent: h.defaultComponent, attrs: all, groups: h.groups, attrsFn: h.attrsFn, recordFn: h.recordFn, mu: h.mu}
+	return &minecraftHandler{terminal: h.terminal, level: h.level, theme: h.theme, profile: h.profile, componentKey: h.componentKey, defaultComponent: h.defaultComponent, attrs: all, groups: h.groups, attrsFn: h.attrsFn, recordFn: h.recordFn}
 }
 func (h *minecraftHandler) WithGroup(name string) slog.Handler {
 	groups := append(append([]string(nil), h.groups...), name)
