@@ -38,6 +38,7 @@ type FieldTransformFunc = logging.FieldTransformFunc
 type SlogConfig = logging.SlogConfig
 type SlogRuntime = logging.SlogRuntime
 type ConsoleAttrsFunc = logging.ConsoleAttrsFunc
+type ConsoleRecordFunc = logging.ConsoleRecordFunc
 
 const LevelTrace slog.Level = logging.LevelTrace
 

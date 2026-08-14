@@ -98,6 +98,40 @@ func TestOpenSlogWritesJSONL(t *testing.T) {
 	}
 }
 
+func TestConsoleRecordDoesNotChangeJSONL(t *testing.T) {
+	old := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(old) })
+	var console bytes.Buffer
+	path := filepath.Join(t.TempDir(), "server.jsonl")
+	runtime, err := OpenSlog(SlogConfig{
+		Level: slog.LevelInfo, Theme: disabledTheme(), Console: &console, FilePath: path,
+		ConsoleRecord: func(_ slog.Level, _, _ string, attrs []slog.Attr) (string, []slog.Attr) {
+			return `Loaded world "Overworld"`, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slog.Info("world loaded", "component", "world", "event", "world.loaded", "world", "Overworld")
+	if err := runtime.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := style.StripANSI(console.String()); !strings.Contains(got, `Loaded world "Overworld"`) || strings.Contains(got, "world=") {
+		t.Fatalf("unexpected console output: %q", got)
+	}
+	var record map[string]any
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(data), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record["msg"] != "world loaded" || record["world"] != "Overworld" {
+		t.Fatalf("structured record changed: %s", data)
+	}
+}
+
 func disabledTheme() style.Theme {
 	theme := style.DefaultTheme()
 	disabled := style.Disabled()

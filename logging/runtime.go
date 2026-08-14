@@ -25,6 +25,7 @@ const (
 )
 
 type ConsoleAttrsFunc func(level slog.Level, component string, attrs []slog.Attr) []slog.Attr
+type ConsoleRecordFunc func(level slog.Level, component, message string, attrs []slog.Attr) (string, []slog.Attr)
 
 type SlogConfig struct {
 	Level            slog.Level
@@ -37,6 +38,7 @@ type SlogConfig struct {
 	FilePath         string
 	FileQueueSize    int
 	ConsoleAttrs     ConsoleAttrsFunc
+	ConsoleRecord    ConsoleRecordFunc
 }
 
 type SlogRuntime struct {
@@ -73,7 +75,7 @@ func OpenSlog(cfg SlogConfig) (*SlogRuntime, error) {
 	}
 	profile := normalizeProfile(cfg.Profile)
 	policy := newComponentPolicy(cfg.Level, cfg.ComponentLevels, cfg.ComponentKey, cfg.DefaultComponent)
-	console := &minecraftHandler{out: cfg.Console, level: policy.minimum, theme: cfg.Theme, profile: profile, componentKey: cfg.ComponentKey, defaultComponent: cfg.DefaultComponent, attrsFn: cfg.ConsoleAttrs, mu: &sync.Mutex{}}
+	console := &minecraftHandler{out: cfg.Console, level: policy.minimum, theme: cfg.Theme, profile: profile, componentKey: cfg.ComponentKey, defaultComponent: cfg.DefaultComponent, attrsFn: cfg.ConsoleAttrs, recordFn: cfg.ConsoleRecord, mu: &sync.Mutex{}}
 	var handlers []slog.Handler
 	handlers = append(handlers, console)
 	runtime := &SlogRuntime{}
@@ -175,6 +177,7 @@ type minecraftHandler struct {
 	attrs                          []slog.Attr
 	groups                         []string
 	attrsFn                        ConsoleAttrsFunc
+	recordFn                       ConsoleRecordFunc
 	mu                             *sync.Mutex
 }
 
@@ -189,6 +192,10 @@ func (h *minecraftHandler) Handle(_ context.Context, rec slog.Record) error {
 	if component == "" {
 		component = h.defaultComponent
 	}
+	message := rec.Message
+	if h.recordFn != nil {
+		message, attrs = h.recordFn(rec.Level, component, message, attrs)
+	}
 	if h.attrsFn != nil {
 		attrs = h.attrsFn(rec.Level, component, attrs)
 	}
@@ -202,7 +209,7 @@ func (h *minecraftHandler) Handle(_ context.Context, rec slog.Record) error {
 		h.theme.TimeValue.Dim().Wrap(timestamp),
 		bracketed(levelStyle(h.theme, rec.Level).Wrap(level)), visiblePadding(level, consoleLevelWidth),
 		bracketed(h.theme.MsgKey.Wrap(component)), visiblePadding(component, consoleScopeWidth),
-		rec.Message,
+		message,
 	)
 	if len(fields) != 0 {
 		line += " " + strings.Join(fields, " ")
@@ -222,7 +229,7 @@ func visiblePadding(value string, width int) string {
 
 func (h *minecraftHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	all := append(append([]slog.Attr(nil), h.attrs...), attrs...)
-	return &minecraftHandler{out: h.out, level: h.level, theme: h.theme, profile: h.profile, componentKey: h.componentKey, defaultComponent: h.defaultComponent, attrs: all, groups: h.groups, attrsFn: h.attrsFn, mu: h.mu}
+	return &minecraftHandler{out: h.out, level: h.level, theme: h.theme, profile: h.profile, componentKey: h.componentKey, defaultComponent: h.defaultComponent, attrs: all, groups: h.groups, attrsFn: h.attrsFn, recordFn: h.recordFn, mu: h.mu}
 }
 func (h *minecraftHandler) WithGroup(name string) slog.Handler {
 	groups := append(append([]string(nil), h.groups...), name)
