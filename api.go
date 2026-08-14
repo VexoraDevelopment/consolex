@@ -1,6 +1,8 @@
 package consolex
 
 import (
+	"io"
+	"log/slog"
 	"os"
 
 	"github.com/VexoraDevelopment/consolex/cmdline"
@@ -33,6 +35,15 @@ type FieldStyleFunc = logging.FieldStyleFunc
 type StaticFieldProvider = logging.StaticFieldProvider
 type FieldTransformer = logging.FieldTransformer
 type FieldTransformFunc = logging.FieldTransformFunc
+type SlogConfig = logging.SlogConfig
+type SlogRuntime = logging.SlogRuntime
+type ConsoleAttrsFunc = logging.ConsoleAttrsFunc
+
+const LevelTrace slog.Level = logging.LevelTrace
+
+func OpenSlog(cfg SlogConfig) (*SlogRuntime, error) { return logging.OpenSlog(cfg) }
+
+var _ io.Closer = (*SlogRuntime)(nil)
 
 func DefaultProfile() Profile                 { return logging.DefaultProfile() }
 func ParseTextLogLine(line string) *LogRecord { return logging.ParseTextLogLine(line) }
